@@ -1,0 +1,25 @@
+[project]
+name = "sentiment-api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "transformers",
+    "optimum[onnxruntime]",
+    "numpy",
+    "requests",
+    "torch",
+]
+
+[dependency-groups]
+dev = []
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

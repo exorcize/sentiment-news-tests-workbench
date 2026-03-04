@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+import argparse
+import sys
+
+import requests
+
+
+def analyze_file(filepath: str, api_url: str, batch_size: int = 1):
+    with open(filepath, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    if not lines:
+        print("No lines found in file.")
+        return
+
+    print(f"Analyzing {len(lines)} headlines from {filepath}\n")
+
+    if batch_size > 1:
+        for i in range(0, len(lines), batch_size):
+            batch = lines[i : i + batch_size]
+            resp = requests.post(f"{api_url}/sentiment", json={"text": batch}, timeout=30)
+            resp.raise_for_status()
+            results = resp.json()
+            for j, (text, res) in enumerate(zip(batch, results)):
+                idx = i + j + 1
+                print(f"[{idx}] {res['label'].upper():8} ({res['confidence']:.2%}) | {text}")
+    else:
+        for i, text in enumerate(lines, 1):
+            resp = requests.post(f"{api_url}/sentiment", json={"text": text}, timeout=30)
+            resp.raise_for_status()
+            res = resp.json()
+            print(f"[{i}] {res['label'].upper():8} ({res['confidence']:.2%}) | {text}")
+
+    print(f"\nDone. Analyzed {len(lines)} headlines.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Analyze news headlines sentiment")
+    parser.add_argument("file", help="Path to .txt file with one headline per line")
+    parser.add_argument("--url", default="http://localhost:8000", help="API base URL")
+    parser.add_argument("--batch", type=int, default=1, help="Batch size (send N at a time)")
+    args = parser.parse_args()
+
+    try:
+        analyze_file(args.file, args.url, args.batch)
+    except FileNotFoundError:
+        print(f"Error: File not found: {args.file}")
+        sys.exit(1)
+    except requests.RequestException as e:
+        print(f"Error: API request failed: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
