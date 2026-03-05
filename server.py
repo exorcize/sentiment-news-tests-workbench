@@ -1,3 +1,4 @@
+import json
 import os
 import time
 from pathlib import Path
@@ -7,9 +8,9 @@ import onnxruntime as ort
 from fastapi import FastAPI
 from pydantic import BaseModel
 from transformers import AutoTokenizer
-from optimum.onnxruntime import ORTModelForSequenceClassification
 
 MODEL_ONNX_PATH = os.getenv("MODEL_ONNX_PATH", str(Path(__file__).resolve().parent / "models" / "sentiment-onnx"))
+MAX_LENGTH = 128
 
 LABEL_MAP = {
     "LABEL_0": "negative",
@@ -30,7 +31,7 @@ def apply_sentiment_rules(text: str) -> str | None:
     return None
 
 
-def _make_cpu_session_options() -> ort.SessionOptions:
+def _make_session_options() -> ort.SessionOptions:
     opts = ort.SessionOptions()
     opts.intra_op_num_threads = 0
     opts.inter_op_num_threads = 1
@@ -46,15 +47,21 @@ def _softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
     return exp_x / np.sum(exp_x, axis=axis, keepdims=True)
 
 
-print(f"Loading ONNX model from: {MODEL_ONNX_PATH} ...")
-session_options = _make_cpu_session_options()
+model_dir = Path(MODEL_ONNX_PATH)
+
+with open(model_dir / "config.json") as f:
+    model_config = json.load(f)
+id2label = model_config.get("id2label", {})
+
+print(f"Loading ONNX model from: {MODEL_ONNX_PATH}")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ONNX_PATH)
-model = ORTModelForSequenceClassification.from_pretrained(
-    MODEL_ONNX_PATH,
+session = ort.InferenceSession(
+    str(model_dir / "model.onnx"),
+    sess_options=_make_session_options(),
     providers=["CPUExecutionProvider"],
-    session_options=session_options,
 )
-print("ONNX model ready (CPU).")
+input_names = [inp.name for inp in session.get_inputs()]
+print(f"ONNX model ready (CPU) | max_length={MAX_LENGTH} | inputs={input_names}")
 
 app = FastAPI()
 
@@ -68,40 +75,28 @@ def sentiment(req: TextRequest):
     t_start = time.perf_counter()
     texts = req.text if isinstance(req.text, list) else [req.text]
 
-    print(f"[{MODEL_ONNX_PATH}] Received {len(texts)} text(s):")
-    for i, t in enumerate(texts):
-        preview = t[:100] + "..." if len(t) > 100 else t
-        print(f"  [{i}] {preview}")
-
     inputs = tokenizer(
         texts,
         return_tensors="np",
         truncation=True,
         padding=True,
-        max_length=512,
+        max_length=MAX_LENGTH,
     )
-    inputs = {k: v.astype(np.int64) for k, v in inputs.items()}
+    feed = {k: inputs[k].astype(np.int64) for k in input_names if k in inputs}
 
-    outputs = model(**inputs)
-    logits = outputs.logits
-    if hasattr(logits, "numpy"):
-        logits = logits.numpy()
+    logits = session.run(None, feed)[0]
     logits = np.asarray(logits, dtype=np.float32)
 
     probs = _softmax(logits, axis=1)
     preds = np.argmax(probs, axis=1).tolist()
-    id2label = model.config.id2label
-
-    def get_label(idx: int) -> str:
-        return id2label.get(idx, id2label.get(str(idx), f"LABEL_{idx}"))
 
     results = []
     for i, pred in enumerate(preds):
-        raw_label = get_label(pred)
+        raw_label = id2label.get(str(pred), f"LABEL_{pred}")
         label = LABEL_MAP.get(raw_label, raw_label)
         confidence = round(float(probs[i, pred]), 4)
         scores = {
-            LABEL_MAP.get(get_label(j), get_label(j)): round(float(probs[i, j]), 4)
+            LABEL_MAP.get(id2label.get(str(j), f"LABEL_{j}"), id2label.get(str(j), f"LABEL_{j}")): round(float(probs[i, j]), 4)
             for j in range(len(id2label))
         }
 
@@ -119,7 +114,7 @@ def sentiment(req: TextRequest):
         })
 
     elapsed_ms = (time.perf_counter() - t_start) * 1000
-    print(f"[{MODEL_ONNX_PATH}] Processed in {elapsed_ms:.2f}ms")
+    print(f"Processed {len(texts)} text(s) in {elapsed_ms:.2f}ms")
 
     return results[0] if isinstance(req.text, str) else results
 

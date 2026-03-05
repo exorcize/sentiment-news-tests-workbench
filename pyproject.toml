@@ -7,14 +7,16 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "transformers",
-    "optimum[onnxruntime]",
+    "onnxruntime",
     "numpy",
     "requests",
-    "torch",
 ]
 
 [dependency-groups]
-dev = []
+export = [
+    "optimum[onnxruntime]",
+    "torch",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
