@@ -51,7 +51,7 @@ def analyze_file(filepath: str, api_url: str, batch_size: int = 1):
 def main():
     parser = argparse.ArgumentParser(description="Analyze news headlines sentiment")
     parser.add_argument("file", help="Path to .txt file with one headline per line")
-    parser.add_argument("--url", default="http://localhost:8000", help="API base URL")
+    parser.add_argument("--url", default="http://localhost:8001", help="API base URL")
     parser.add_argument("--batch", type=int, default=1, help="Batch size (send N at a time)")
     args = parser.parse_args()
 
