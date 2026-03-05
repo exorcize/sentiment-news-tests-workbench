@@ -12,6 +12,7 @@ MODEL = os.getenv("MODEL", "ProsusAI/finbert")
 BASE_DIR = Path(__file__).resolve().parent / "models"
 TMP_DIR = BASE_DIR / "_conversion_tmp"
 OUTPUT_DIR = BASE_DIR / "sentiment-onnx"
+QUANT_REDUCE_RANGE = os.getenv("QUANT_REDUCE_RANGE", "1") == "1"
 
 
 def export_onnx():
@@ -28,6 +29,8 @@ def quantize_int8():
     quantize_dynamic(
         model_input=str(TMP_DIR / "model.onnx"),
         model_output=str(OUTPUT_DIR / "model.onnx"),
+        op_types_to_quantize=["MatMul", "Gemm"],
+        reduce_range=QUANT_REDUCE_RANGE,
         weight_type=QuantType.QInt8,
     )
 
@@ -43,6 +46,8 @@ def copy_tokenizer_and_config():
 
 def main():
     print(f"Output: {OUTPUT_DIR}\n")
+    print(f"Model: {MODEL}")
+    print(f"Quant reduce range: {QUANT_REDUCE_RANGE}\n")
 
     export_onnx()
     quantize_int8()

@@ -10,13 +10,9 @@ from pydantic import BaseModel
 from transformers import AutoTokenizer
 
 MODEL_ONNX_PATH = os.getenv("MODEL_ONNX_PATH", str(Path(__file__).resolve().parent / "models" / "sentiment-onnx"))
-MAX_LENGTH = 128
-
-LABEL_MAP = {
-    "LABEL_0": "negative",
-    "LABEL_1": "neutral",
-    "LABEL_2": "positive",
-}
+MAX_LENGTH = int(os.getenv("MAX_LENGTH", "64"))
+RETURN_SCORES = os.getenv("RETURN_SCORES", "0") == "1"
+LOG_TIMINGS = os.getenv("LOG_TIMINGS", "0") == "1"
 
 SENTIMENT_OVERRIDE_RULES = [
     (["reverse split", "reverse stock split"], "negative"),
@@ -25,9 +21,9 @@ SENTIMENT_OVERRIDE_RULES = [
 
 def apply_sentiment_rules(text: str) -> str | None:
     lower = text.lower()
-    for phrases, sentiment in SENTIMENT_OVERRIDE_RULES:
+    for phrases, sentiment_label in SENTIMENT_OVERRIDE_RULES:
         if any(p in lower for p in phrases):
-            return sentiment
+            return sentiment_label
     return None
 
 
@@ -47,9 +43,21 @@ def _softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
     return exp_x / np.sum(exp_x, axis=axis, keepdims=True)
 
 
+def _normalize_label(raw_label: str) -> str:
+    # Keep compatibility across different model label styles.
+    normalized = raw_label.lower()
+    if normalized in {"label_0", "negative"}:
+        return "negative"
+    if normalized in {"label_1", "neutral"}:
+        return "neutral"
+    if normalized in {"label_2", "positive"}:
+        return "positive"
+    return raw_label
+
+
 model_dir = Path(MODEL_ONNX_PATH)
 
-with open(model_dir / "config.json") as f:
+with open(model_dir / "config.json", encoding="utf-8") as f:
     model_config = json.load(f)
 id2label = model_config.get("id2label", {})
 
@@ -61,7 +69,7 @@ session = ort.InferenceSession(
     providers=["CPUExecutionProvider"],
 )
 input_names = [inp.name for inp in session.get_inputs()]
-print(f"ONNX model ready (CPU) | max_length={MAX_LENGTH} | inputs={input_names}")
+print(f"ONNX model ready (CPU) | max_length={MAX_LENGTH} | return_scores={RETURN_SCORES} | inputs={input_names}")
 
 app = FastAPI()
 
@@ -93,12 +101,8 @@ def sentiment(req: TextRequest):
     results = []
     for i, pred in enumerate(preds):
         raw_label = id2label.get(str(pred), f"LABEL_{pred}")
-        label = LABEL_MAP.get(raw_label, raw_label)
+        label = _normalize_label(raw_label)
         confidence = round(float(probs[i, pred]), 4)
-        scores = {
-            LABEL_MAP.get(id2label.get(str(j), f"LABEL_{j}"), id2label.get(str(j), f"LABEL_{j}")): round(float(probs[i, j]), 4)
-            for j in range(len(id2label))
-        }
 
         rule_sentiment = apply_sentiment_rules(texts[i])
         rule_override = rule_sentiment is not None
@@ -106,15 +110,22 @@ def sentiment(req: TextRequest):
             label = rule_sentiment
             confidence = 1.0
 
-        results.append({
+        result = {
             "label": label,
             "confidence": confidence,
-            "scores": scores,
             "rule_override": rule_override,
-        })
+        }
+        if RETURN_SCORES:
+            result["scores"] = {
+                _normalize_label(id2label.get(str(j), f"LABEL_{j}")): round(float(probs[i, j]), 4)
+                for j in range(len(id2label))
+            }
+
+        results.append(result)
 
     elapsed_ms = (time.perf_counter() - t_start) * 1000
-    print(f"Processed {len(texts)} text(s) in {elapsed_ms:.2f}ms")
+    if LOG_TIMINGS:
+        print(f"Processed {len(texts)} text(s) in {elapsed_ms:.2f}ms")
 
     return results[0] if isinstance(req.text, str) else results
 
