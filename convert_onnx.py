@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from optimum.onnxruntime import ORTModelForSequenceClassification
-from onnxruntime.quantization import quantize_dynamic, QuantType
+from onnxruntime.quantization import QuantType, quant_pre_process, quantize_dynamic
 from transformers import AutoTokenizer
 
 MODEL = os.getenv("MODEL", "ProsusAI/finbert")
@@ -26,8 +26,38 @@ def export_onnx():
 def quantize_int8():
     print("[2/3] Quantizing to INT8 (dynamic)")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    input_model = TMP_DIR / "model.onnx"
+    preprocessed_model = TMP_DIR / "model.preprocessed.onnx"
+
+    # Best-effort preprocess before quantization (recommended by ORT).
+    # Some transformer exports can fail symbolic shape inference, so we fallback safely.
+    try:
+        quant_pre_process(
+            input_model=str(input_model),
+            output_model_path=str(preprocessed_model),
+            skip_optimization=True,
+        )
+        model_for_quant = preprocessed_model
+        print("Preprocess: OK")
+    except Exception as first_error:  # pragma: no cover - environment/model dependent
+        try:
+            quant_pre_process(
+                input_model=str(input_model),
+                output_model_path=str(preprocessed_model),
+                skip_optimization=True,
+                skip_symbolic_shape=True,
+            )
+            model_for_quant = preprocessed_model
+            print("Preprocess: OK (without symbolic shape inference)")
+        except Exception as second_error:  # pragma: no cover - environment/model dependent
+            model_for_quant = input_model
+            print(
+                "Preprocess skipped (fallback to direct quantization). "
+                f"Errors: {first_error} | {second_error}"
+            )
+
     quantize_dynamic(
-        model_input=str(TMP_DIR / "model.onnx"),
+        model_input=str(model_for_quant),
         model_output=str(OUTPUT_DIR / "model.onnx"),
         op_types_to_quantize=["MatMul", "Gemm"],
         reduce_range=QUANT_REDUCE_RANGE,
