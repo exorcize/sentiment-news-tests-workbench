@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import sys
+import time
 
 import requests
 
@@ -15,10 +16,15 @@ def analyze_file(filepath: str, api_url: str, batch_size: int = 1):
 
     print(f"Analyzing {len(lines)} headlines from {filepath}\n")
 
+    request_times_ms = []
+
     if batch_size > 1:
         for i in range(0, len(lines), batch_size):
             batch = lines[i : i + batch_size]
+            start = time.perf_counter()
             resp = requests.post(f"{api_url}/sentiment", json={"text": batch}, timeout=30)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            request_times_ms.append(elapsed_ms)
             resp.raise_for_status()
             results = resp.json()
             for j, (text, res) in enumerate(zip(batch, results)):
@@ -26,12 +32,20 @@ def analyze_file(filepath: str, api_url: str, batch_size: int = 1):
                 print(f"[{idx}] {res['label'].upper():8} ({res['confidence']:.2%}) | {text}")
     else:
         for i, text in enumerate(lines, 1):
+            start = time.perf_counter()
             resp = requests.post(f"{api_url}/sentiment", json={"text": text}, timeout=30)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            request_times_ms.append(elapsed_ms)
             resp.raise_for_status()
             res = resp.json()
             print(f"[{i}] {res['label'].upper():8} ({res['confidence']:.2%}) | {text}")
 
+    total_requests = len(request_times_ms)
+    total_time_ms = sum(request_times_ms)
+    avg_ms = total_time_ms / total_requests if total_requests > 0 else 0
+
     print(f"\nDone. Analyzed {len(lines)} headlines.")
+    print(f"Requests: {total_requests} | Total: {total_time_ms:.1f}ms | Avg: {avg_ms:.1f}ms/request")
 
 
 def main():
