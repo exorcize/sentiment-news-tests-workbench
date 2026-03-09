@@ -18,7 +18,7 @@ QUANT_REDUCE_RANGE = os.getenv("QUANT_REDUCE_RANGE", "1") == "1"
 def export_onnx():
     print(f"[1/3] Exporting: {MODEL} → ONNX")
     model = ORTModelForSequenceClassification.from_pretrained(MODEL, export=True)
-    model.save_pretrained(TMP_DIR)
+    model.save_pretrained(TMP_DIR) 
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     tokenizer.save_pretrained(TMP_DIR)
 

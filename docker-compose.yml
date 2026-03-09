@@ -1,0 +1,77 @@
+services:
+  api:
+    image: trendvision-ai-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trendvision-ai-api
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_ONNX_PATH=/app/models/sentiment-onnx
+      - MAX_LENGTH=64
+      - RETURN_SCORES=false
+      - LOG_TIMINGS=false
+      - HOST=0.0.0.0
+      - PORT=8000
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/src
+    volumes:
+      - ./models:/app/models:ro
+    restart: on-failure:3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/sentiment/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Test client container
+  test-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trendvision-ai-test-client
+    profiles:
+      - test
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        import requests
+        import time
+        
+        # Wait for API to be ready
+        for i in range(10):
+            try:
+                r = requests.get("http://api:8000/sentiment/health")
+                if r.status_code == 200:
+                    print("API is ready!")
+                    break
+            except:
+                pass
+            time.sleep(2)
+        
+        # Test sentiment analysis
+        tests = [
+            "Stock prices went up today",
+            "Company reported losses",
+            "Earnings beat expectations",
+            "Layoffs announced",
+        ]
+        
+        for text in tests:
+            r = requests.post("http://api:8000/sentiment", json={"text": text})
+            print(f"{text[:40]:40} -> {r.json()}")
+    environment:
+      - PYTHONUNBUFFERED=1
