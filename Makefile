@@ -10,19 +10,19 @@ help:
 	@echo "  make clean    - Remove containers and volumes"
 
 build:
-	docker-compose build
+	docker compose build
 
 up:
-	docker-compose up -d
+	docker compose up -d
 
 down:
-	docker-compose down
+	docker compose down
 
 logs:
-	docker-compose logs -f
+	docker compose logs -f
 
 test:
-	docker-compose --profile test up test-client
+	docker compose --profile test up test-client
 
 clean:
-	docker-compose down -v
+	docker compose down -v
