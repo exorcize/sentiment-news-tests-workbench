@@ -14,10 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8002
 
-EXPOSE 8000
+EXPOSE 8002
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/sentiment/health || exit 1
+    CMD curl -f http://localhost:8002/sentiment/health || exit 1
 
 CMD ["python", "-m", "sentiment_api.main"]

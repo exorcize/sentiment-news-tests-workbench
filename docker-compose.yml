@@ -14,6 +14,13 @@ services:
       - LOG_TIMINGS=false
       - HOST=0.0.0.0
       - PORT=8002
+      # Throughput: raise to match vCPUs if RAM allows (each worker loads a full model copy).
+      - WORKERS=1
+      # ORT: 0 = default thread pool (usually all logical CPUs in the container).
+      - ORT_INTRA_OP_NUM_THREADS=0
+      - ORT_INTER_OP_NUM_THREADS=1
+      # Optional: cap BLAS/OpenMP (e.g. same as vCPUs or floor(cpus/workers)).
+      # - OMP_NUM_THREADS=2
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app/src
     volumes:
@@ -27,15 +34,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-
   # Test client container
   test-client:
     build:

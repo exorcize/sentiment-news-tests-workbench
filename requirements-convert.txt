@@ -1,0 +1,3 @@
+# Conversion pipeline for convert_onnx.py (not required for the API image).
+-r requirements.txt
+optimum[onnxruntime]>=1.14.0

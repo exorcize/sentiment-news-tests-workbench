@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,9 +43,24 @@ class SentimentService:
         self._input_names: list[str] = []
         self._override_rules = DEFAULT_OVERRIDE_RULES
 
+    def _apply_thread_env(self) -> None:
+        """Cap BLAS/OpenMP threads before ORT session (helps cgroup-limited containers)."""
+        n = self.settings.omp_num_threads
+        if n is None:
+            return
+        val = str(max(1, n))
+        for key in (
+            "OMP_NUM_THREADS",
+            "MKL_NUM_THREADS",
+            "OPENBLAS_NUM_THREADS",
+            "NUMEXPR_NUM_THREADS",
+        ):
+            os.environ.setdefault(key, val)
+
     def load_model(self) -> None:
         """Load ONNX model and tokenizer."""
         try:
+            self._apply_thread_env()
             model_dir = self.settings.model_onnx_path
             if not model_dir.exists():
                 raise ModelLoadError(f"Model directory not found: {model_dir}")
@@ -70,7 +86,9 @@ class SentimentService:
             self._input_names = [inp.name for inp in self._session.get_inputs()]
 
             print(
-                f"ONNX model ready (CPU) | max_length={self.settings.max_length} | "
+                f"ONNX model ready (CPU) | intra_op_threads={self.settings.ort_intra_op_num_threads} "
+                f"| inter_op_threads={self.settings.ort_inter_op_num_threads} "
+                f"| max_length={self.settings.max_length} | "
                 f"return_scores={self.settings.return_scores} | inputs={self._input_names}"
             )
         except Exception as e:
@@ -79,10 +97,12 @@ class SentimentService:
     def _make_session_options(self) -> ort.SessionOptions:
         """Configure ONNX Runtime session options for optimal CPU performance."""
         opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 0
-        opts.inter_op_num_threads = 1
+        opts.intra_op_num_threads = self.settings.ort_intra_op_num_threads
+        opts.inter_op_num_threads = self.settings.ort_inter_op_num_threads
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        opts.enable_mem_pattern = True
+        opts.enable_cpu_mem_arena = True
         opts.add_session_config_entry("session.intra_op.allow_spinning", "1")
         return opts
 

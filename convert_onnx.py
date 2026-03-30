@@ -13,6 +13,8 @@ BASE_DIR = Path(__file__).resolve().parent / "models"
 TMP_DIR = BASE_DIR / "_conversion_tmp"
 OUTPUT_DIR = BASE_DIR / "sentiment-onnx"
 QUANT_REDUCE_RANGE = os.getenv("QUANT_REDUCE_RANGE", "1") == "1"
+# Per-channel weights often improve accuracy on MatMul/Gemm with small runtime cost.
+QUANT_PER_CHANNEL = os.getenv("QUANT_PER_CHANNEL", "1") == "1"
 
 
 def export_onnx():
@@ -23,43 +25,46 @@ def export_onnx():
     tokenizer.save_pretrained(TMP_DIR)
 
 
+def _preprocess_for_quant(input_model: Path, preprocessed_model: Path) -> Path:
+    """Run ORT preprocess with fallbacks (graph opt + shape inference can fail on some exports)."""
+    attempts: list[dict[str, bool]] = [
+        {"skip_optimization": False, "skip_symbolic_shape": False},
+        {"skip_optimization": False, "skip_symbolic_shape": True},
+        {"skip_optimization": True, "skip_symbolic_shape": False},
+        {"skip_optimization": True, "skip_symbolic_shape": True},
+    ]
+    last_err: Exception | None = None
+    for opts in attempts:
+        try:
+            quant_pre_process(
+                input_model=str(input_model),
+                output_model_path=str(preprocessed_model),
+                **opts,
+            )
+            print(f"Preprocess: OK ({opts})")
+            return preprocessed_model
+        except Exception as e:  # pragma: no cover - environment/model dependent
+            last_err = e
+    print(
+        "Preprocess skipped (fallback to direct quantization). "
+        f"Last error: {last_err}"
+    )
+    return input_model
+
+
 def quantize_int8():
     print("[2/3] Quantizing to INT8 (dynamic)")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     input_model = TMP_DIR / "model.onnx"
     preprocessed_model = TMP_DIR / "model.preprocessed.onnx"
 
-    # Best-effort preprocess before quantization (recommended by ORT).
-    # Some transformer exports can fail symbolic shape inference, so we fallback safely.
-    try:
-        quant_pre_process(
-            input_model=str(input_model),
-            output_model_path=str(preprocessed_model),
-            skip_optimization=True,
-        )
-        model_for_quant = preprocessed_model
-        print("Preprocess: OK")
-    except Exception as first_error:  # pragma: no cover - environment/model dependent
-        try:
-            quant_pre_process(
-                input_model=str(input_model),
-                output_model_path=str(preprocessed_model),
-                skip_optimization=True,
-                skip_symbolic_shape=True,
-            )
-            model_for_quant = preprocessed_model
-            print("Preprocess: OK (without symbolic shape inference)")
-        except Exception as second_error:  # pragma: no cover - environment/model dependent
-            model_for_quant = input_model
-            print(
-                "Preprocess skipped (fallback to direct quantization). "
-                f"Errors: {first_error} | {second_error}"
-            )
+    model_for_quant = _preprocess_for_quant(input_model, preprocessed_model)
 
     quantize_dynamic(
         model_input=str(model_for_quant),
         model_output=str(OUTPUT_DIR / "model.onnx"),
         op_types_to_quantize=["MatMul", "Gemm"],
+        per_channel=QUANT_PER_CHANNEL,
         reduce_range=QUANT_REDUCE_RANGE,
         weight_type=QuantType.QInt8,
     )
@@ -77,7 +82,8 @@ def copy_tokenizer_and_config():
 def main():
     print(f"Output: {OUTPUT_DIR}\n")
     print(f"Model: {MODEL}")
-    print(f"Quant reduce range: {QUANT_REDUCE_RANGE}\n")
+    print(f"Quant reduce range: {QUANT_REDUCE_RANGE}")
+    print(f"Quant per-channel: {QUANT_PER_CHANNEL}\n")
 
     export_onnx()
     quantize_int8()

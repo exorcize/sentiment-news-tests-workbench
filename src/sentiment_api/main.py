@@ -55,9 +55,11 @@ if __name__ == "__main__":
     import uvicorn
 
     settings = get_settings()
+    workers = 1 if settings.debug else settings.workers
     uvicorn.run(
         "sentiment_api.main:app",
         host=settings.host,
         port=settings.port,
+        workers=workers,
         reload=settings.debug,
     )
