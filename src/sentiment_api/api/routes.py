@@ -2,16 +2,17 @@ import time
 from functools import wraps
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..core.config import get_settings
 from ..core.exceptions import (
     ModelLoadError,
     PredictionError,
-    TokenizationError,
     SentimentAPIError,
+    TokenizationError,
 )
+from ..services.router import SentimentRouter, get_router
 from ..services.sentiment import SentimentService, get_sentiment_service
 
 
@@ -23,6 +24,12 @@ class SentimentRequest(BaseModel):
     return_scores: bool | None = Field(
         None, description="Include all class scores in response"
     )
+    symbol: str | None = Field(
+        None, description="Target ticker for target-aware routing"
+    )
+    company_name: str | None = Field(
+        None, description="Company name for disambiguation (e.g. 'Skillz Platform Inc.')"
+    )
 
 
 class SentimentResponse(BaseModel):
@@ -30,6 +37,11 @@ class SentimentResponse(BaseModel):
     confidence: float
     rule_override: bool = False
     scores: dict[str, float] | None = None
+    route: str | None = None
+    reasoning: str | None = None
+    finbert_label: str | None = None
+    finbert_confidence: float | None = None
+    gemini_latency_ms: float | None = None
 
 
 class HealthResponse(BaseModel):
@@ -65,38 +77,46 @@ def with_retry(max_attempts: int = 3, delay: float = 1.0, backoff_factor: float 
     return decorator
 
 
+def _get_router(
+    service: SentimentService = Depends(get_sentiment_service),
+) -> SentimentRouter:
+    return get_router(service)
+
+
 @router.post("", response_model=SentimentResponse | list[SentimentResponse])
 @with_retry(max_attempts=3, delay=1.0, backoff_factor=2.0)
 async def analyze_sentiment(
     request: SentimentRequest,
-    service: SentimentService = Depends(get_sentiment_service),
+    router_svc: SentimentRouter = Depends(_get_router),
 ) -> Any:
-    """
-    Analyze sentiment of text(s).
-
-    Returns sentiment label (negative/neutral/positive) with confidence score.
-    """
+    """Analyze sentiment of text(s), optionally target-aware for a given symbol."""
     try:
-        results = service.analyze(request.text, return_scores=request.return_scores)
+        texts = request.text if isinstance(request.text, list) else [request.text]
+        results = []
+        for t in texts:
+            r = await router_svc.classify(
+                text=t,
+                symbol=request.symbol,
+                company_name=request.company_name,
+                return_scores=request.return_scores,
+            )
+            results.append(
+                SentimentResponse(
+                    label=r.label,
+                    confidence=r.confidence,
+                    rule_override=r.rule_override,
+                    scores=r.scores,
+                    route=r.route,
+                    reasoning=r.reasoning,
+                    finbert_label=r.finbert_label,
+                    finbert_confidence=r.finbert_confidence,
+                    gemini_latency_ms=r.gemini_latency_ms,
+                )
+            )
 
         if isinstance(request.text, str):
-            result = results[0]
-            return SentimentResponse(
-                label=result.label,
-                confidence=result.confidence,
-                rule_override=result.rule_override,
-                scores=result.scores,
-            )
-
-        return [
-            SentimentResponse(
-                label=r.label,
-                confidence=r.confidence,
-                rule_override=r.rule_override,
-                scores=r.scores,
-            )
-            for r in results
-        ]
+            return results[0]
+        return results
 
     except ModelLoadError as e:
         raise HTTPException(status_code=503, detail=f"Model not available: {e}")
@@ -106,6 +126,41 @@ async def analyze_sentiment(
         raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
     except SentimentAPIError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/batch", response_model=list[SentimentResponse])
+async def analyze_sentiment_batch(
+    request: SentimentRequest,
+    router_svc: SentimentRouter = Depends(_get_router),
+) -> Any:
+    """Batch endpoint scaffold (enable via SENTIMENT_BATCH_ENABLED=1)."""
+    settings = get_settings()
+    if not settings.sentiment_batch_enabled:
+        raise HTTPException(status_code=404, detail="batch endpoint disabled")
+
+    texts = request.text if isinstance(request.text, list) else [request.text]
+    out: list[SentimentResponse] = []
+    for t in texts:
+        r = await router_svc.classify(
+            text=t,
+            symbol=request.symbol,
+            company_name=request.company_name,
+            return_scores=request.return_scores,
+        )
+        out.append(
+            SentimentResponse(
+                label=r.label,
+                confidence=r.confidence,
+                rule_override=r.rule_override,
+                scores=r.scores,
+                route=r.route,
+                reasoning=r.reasoning,
+                finbert_label=r.finbert_label,
+                finbert_confidence=r.finbert_confidence,
+                gemini_latency_ms=r.gemini_latency_ms,
+            )
+        )
+    return out
 
 
 @router.get("/health", response_model=HealthResponse)

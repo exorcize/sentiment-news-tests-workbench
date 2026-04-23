@@ -7,6 +7,8 @@ services:
     container_name: trendvision-sentiment-api
     ports:
       - "127.0.0.1:8002:8002"
+    env_file:
+      - .env
     environment:
       - MODEL_ONNX_PATH=/app/models/sentiment-onnx
       - MAX_LENGTH=64
@@ -23,6 +25,12 @@ services:
       # - OMP_NUM_THREADS=2
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app/src
+      # Target-aware routing picks these up from env_file above.
+      # REDIS_HOST / REDIS_PORT / REDIS_DB / REDIS_PASSWORD
+      # GEMINI_API_KEY / GEMINI_MODEL / GEMINI_TIMEOUT_SECONDS
+      # SENTIMENT_CACHE_TTL_SECONDS / SENTIMENT_LOW_CONFIDENCE_THRESHOLD
+      # SENTIMENT_BATCH_ENABLED
+      # OTEL_ENABLED / OTEL_OTLP_ENDPOINT
     volumes:
       - ./models:/app/models:ro
     restart: on-failure:3

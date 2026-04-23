@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router
 from .core.config import get_settings
+from .core.metrics import setup_metrics
+from .services.cache import get_cache
 from .services.sentiment import get_sentiment_service
 
 
@@ -13,6 +15,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.app_name} v{settings.app_version}")
 
+    setup_metrics()
+
     try:
         service = get_sentiment_service()
         print("Model loaded successfully")
@@ -21,6 +25,10 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    try:
+        await get_cache().close()
+    except Exception:
+        pass
     print("Shutting down application")
 
 

@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     retry_delay: float = 1.0
     retry_backoff_factor: float = 2.0
 
+    # Redis cache for target-aware sentiment results
+    redis_host: str = "redis"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: str | None = None
+    sentiment_cache_ttl_seconds: int = 7 * 24 * 3600  # 7 days
+
+    # Target-aware routing
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash-lite"
+    gemini_timeout_seconds: float = 5.0
+    sentiment_low_confidence_threshold: float = 0.6
+    sentiment_batch_enabled: bool = False
+
     def model_post_init(self, __context) -> None:
         if val := os.getenv("MODEL_ONNX_PATH"):
             self.model_onnx_path = Path(val)
@@ -59,6 +73,27 @@ class Settings(BaseSettings):
             self.omp_num_threads = int(val)
         elif os.getenv("OMP_NUM_THREADS") == "":
             self.omp_num_threads = None
+
+        if val := os.getenv("REDIS_HOST"):
+            self.redis_host = val
+        if val := os.getenv("REDIS_PORT"):
+            self.redis_port = int(val)
+        if val := os.getenv("REDIS_DB"):
+            self.redis_db = int(val)
+        if val := os.getenv("REDIS_PASSWORD"):
+            self.redis_password = val
+        if val := os.getenv("SENTIMENT_CACHE_TTL_SECONDS"):
+            self.sentiment_cache_ttl_seconds = int(val)
+        if val := os.getenv("GEMINI_API_KEY"):
+            self.gemini_api_key = val
+        if val := os.getenv("GEMINI_MODEL"):
+            self.gemini_model = val
+        if val := os.getenv("GEMINI_TIMEOUT_SECONDS"):
+            self.gemini_timeout_seconds = float(val)
+        if val := os.getenv("SENTIMENT_LOW_CONFIDENCE_THRESHOLD"):
+            self.sentiment_low_confidence_threshold = float(val)
+        if val := os.getenv("SENTIMENT_BATCH_ENABLED"):
+            self.sentiment_batch_enabled = val == "1"
 
 
 @lru_cache
