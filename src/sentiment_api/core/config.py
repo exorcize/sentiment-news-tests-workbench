@@ -50,7 +50,13 @@ class Settings(BaseSettings):
     # Target-aware routing
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash-lite"
-    gemini_timeout_seconds: float = 5.0
+    gemini_fallback_models: str = "gemini-2.5-flash,gemini-2.0-flash"
+    gemini_timeout_seconds: float = 4.0
+    # Circuit breaker: open when >= threshold errors land inside window;
+    # stays open for cooldown seconds before probing again.
+    gemini_circuit_threshold: int = 5
+    gemini_circuit_window_seconds: float = 60.0
+    gemini_circuit_cooldown_seconds: float = 120.0
     sentiment_low_confidence_threshold: float = 0.6
     sentiment_batch_enabled: bool = False
 
@@ -88,8 +94,16 @@ class Settings(BaseSettings):
             self.gemini_api_key = val
         if val := os.getenv("GEMINI_MODEL"):
             self.gemini_model = val
+        if val := os.getenv("GEMINI_FALLBACK_MODELS"):
+            self.gemini_fallback_models = val
         if val := os.getenv("GEMINI_TIMEOUT_SECONDS"):
             self.gemini_timeout_seconds = float(val)
+        if val := os.getenv("GEMINI_CIRCUIT_THRESHOLD"):
+            self.gemini_circuit_threshold = int(val)
+        if val := os.getenv("GEMINI_CIRCUIT_WINDOW_SECONDS"):
+            self.gemini_circuit_window_seconds = float(val)
+        if val := os.getenv("GEMINI_CIRCUIT_COOLDOWN_SECONDS"):
+            self.gemini_circuit_cooldown_seconds = float(val)
         if val := os.getenv("SENTIMENT_LOW_CONFIDENCE_THRESHOLD"):
             self.sentiment_low_confidence_threshold = float(val)
         if val := os.getenv("SENTIMENT_BATCH_ENABLED"):

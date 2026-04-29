@@ -7,6 +7,7 @@ When symbol is absent: legacy FinBERT path (backward compat).
 """
 import logging
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 
 from ..core.config import Settings, get_settings
@@ -18,11 +19,50 @@ from ..core.metrics import (
 )
 from .cache import SentimentCache, get_cache
 from .detector import is_ambiguous
-from .gemini import GeminiResult, GeminiService, get_gemini_service
+from .gemini import (
+    GeminiOverloadError,
+    GeminiResult,
+    GeminiService,
+    _is_unhealthy,
+    get_gemini_service,
+)
 from .normalize import cache_key
 from .sentiment import SentimentResult, SentimentService
 
 logger = logging.getLogger(__name__)
+
+
+class GeminiCircuit:
+    """Open the gate when overload errors pile up; close after cooldown."""
+
+    def __init__(self, threshold: int, window: float, cooldown: float):
+        self.threshold = max(1, threshold)
+        self.window = max(1.0, window)
+        self.cooldown = max(1.0, cooldown)
+        self._errors: deque[float] = deque()
+        self._open_until: float = 0.0
+
+    def is_open(self) -> bool:
+        return time.monotonic() < self._open_until
+
+    def record_error(self) -> None:
+        now = time.monotonic()
+        self._errors.append(now)
+        cutoff = now - self.window
+        while self._errors and self._errors[0] < cutoff:
+            self._errors.popleft()
+        if len(self._errors) >= self.threshold:
+            self._open_until = now + self.cooldown
+            self._errors.clear()
+            logger.warning(
+                "gemini circuit OPEN for %.0fs after %d overload errors",
+                self.cooldown, self.threshold,
+            )
+
+    def record_success(self) -> None:
+        if self._errors or self._open_until:
+            self._errors.clear()
+            self._open_until = 0.0
 
 
 @dataclass
@@ -47,11 +87,17 @@ class SentimentRouter:
         gemini: GeminiService | None = None,
         cache: SentimentCache | None = None,
         settings: Settings | None = None,
+        circuit: GeminiCircuit | None = None,
     ):
         self.sentiment = sentiment
         self.gemini = gemini or get_gemini_service()
         self.cache = cache or get_cache()
         self.settings = settings or get_settings()
+        self.circuit = circuit or GeminiCircuit(
+            threshold=self.settings.gemini_circuit_threshold,
+            window=self.settings.gemini_circuit_window_seconds,
+            cooldown=self.settings.gemini_circuit_cooldown_seconds,
+        )
 
     async def classify(
         self,
@@ -104,12 +150,19 @@ class SentimentRouter:
 
         ambiguous = is_ambiguous(text, symbol)
         low_conf = fb.confidence < self.settings.sentiment_low_confidence_threshold
-        use_gemini = self.gemini.available and (ambiguous or low_conf)
+        circuit_open = self.circuit.is_open()
+        use_gemini = (
+            self.gemini.available and (ambiguous or low_conf) and not circuit_open
+        )
         escalated = use_gemini and not ambiguous and low_conf
+
+        if (ambiguous or low_conf) and circuit_open:
+            record_route("gemini_circuit_open")
 
         if use_gemini:
             try:
                 gem = await self.gemini.classify(text, symbol, company_name)
+                self.circuit.record_success()
                 record_gemini_latency(gem.latency_ms)
                 record_gemini_tokens("input", gem.input_tokens)
                 record_gemini_tokens("output", gem.output_tokens)
@@ -131,6 +184,8 @@ class SentimentRouter:
                 await self.cache.set(key, asdict(result))
                 return result
             except Exception as e:
+                if isinstance(e, GeminiOverloadError) or _is_unhealthy(e):
+                    self.circuit.record_error()
                 logger.warning("gemini classify failed, falling back to finbert: %s", e)
                 record_route("gemini_error")
 
