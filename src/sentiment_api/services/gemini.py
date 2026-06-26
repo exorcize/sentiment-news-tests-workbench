@@ -20,7 +20,20 @@ Headline: {headline}
 
 Is this headline bullish, bearish, or neutral for {symbol}? Consider who benefits
 (plaintiff vs defendant, acquirer vs target, winner vs loser, beneficiary vs harmed
-party) — not overall tone. Respond only with JSON.
+party) — not overall tone.
+
+For capital-markets / financing events, judge the impact on the share price, not
+the wording:
+- Dilutive raises (public/secondary/follow-on offering, private placement,
+  registered direct, ATM, convertible/senior notes, pre-funded warrants) are
+  generally bearish for the issuer — they dilute existing shareholders — unless
+  the raise is clearly strategic/non-dilutive or priced at a premium to market.
+- Withdrawing, cancelling, or terminating a planned dilutive offering or
+  registration is generally neutral-to-bullish (dilution avoided), unless it
+  signals the company failed to secure financing it needs.
+- Reverse splits are typically bearish; buybacks/repurchases typically bullish.
+
+Respond only with JSON.
 """
 
 _RESPONSE_SCHEMA = {

@@ -52,6 +52,27 @@ _AMBIGUOUS_PATTERNS: list[re.Pattern[str]] = [
         r"selected\s+by|loses?\s+(?:contract|customer|account))\b",
         re.IGNORECASE,
     ),
+    # Capital markets / financing / corporate actions.
+    # FinBERT keys on surface tone here ("withdraws"/"cancels" → negative,
+    # "announces pricing" → neutral) which routinely inverts the real impact on
+    # the issuer: a dilutive raise is bearish, withdrawing one is neutral/bullish.
+    # Escalate the whole class to target-aware (Gemini) judgement.
+    re.compile(
+        r"\b(?:"
+        r"(?:public|private|secondary|follow[\s-]?on|underwritten|registered\s+direct|"
+        r"rights|shelf|equity|debt|notes|stock|share|overnight|marketed)\s+offering|"
+        r"offering\s+of|private\s+placement|registered\s+direct|"
+        r"at[\s-]?the[\s-]?market|"
+        r"(?:S-1|F-1|S-3|registration\s+statement|prospectus(?:\s+supplement)?)|"
+        r"convertible\s+(?:notes|senior\s+notes|debentures|preferred)|"
+        r"senior\s+(?:secured\s+|unsecured\s+)?notes|"
+        r"pre[\s-]?funded\s+warrants?|"
+        r"pricing\s+of|prices?\s+(?:its\s+|a\s+)?(?:\$|public|private|secondary|"
+        r"underwritten|offering)|"
+        r"going\s+concern|uplist(?:s|ing|ed)?|direct\s+listing"
+        r")\b",
+        re.IGNORECASE,
+    ),
 ]
 
 

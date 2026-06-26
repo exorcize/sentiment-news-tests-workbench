@@ -133,8 +133,21 @@ class SentimentRouter:
         # lets us escalate on low confidence.
         fb = self._finbert(text, return_scores)
 
-        # Rule overrides (reverse split, buyback, etc.) are high-signal — trust them.
-        if fb.rule_override:
+        ambiguous = is_ambiguous(text, symbol)
+        circuit_open = self.circuit.is_open()
+
+        # Rule overrides (reverse split, buyback, etc.) are high-signal — trust
+        # them, UNLESS the headline also carries a conflicting capital-markets
+        # signal (e.g. a buyback announced alongside a dilutive secondary
+        # offering). In that mixed case the rule is no longer unambiguous, so
+        # defer to target-aware judgement when it's available.
+        rule_conflict = (
+            fb.rule_override
+            and ambiguous
+            and self.gemini.available
+            and not circuit_open
+        )
+        if fb.rule_override and not rule_conflict:
             result = RouterResult(
                 label=fb.label,
                 confidence=fb.confidence,
@@ -148,9 +161,7 @@ class SentimentRouter:
             await self.cache.set(key, asdict(result))
             return result
 
-        ambiguous = is_ambiguous(text, symbol)
         low_conf = fb.confidence < self.settings.sentiment_low_confidence_threshold
-        circuit_open = self.circuit.is_open()
         use_gemini = (
             self.gemini.available and (ambiguous or low_conf) and not circuit_open
         )
